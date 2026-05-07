@@ -341,6 +341,55 @@ button {
   display: none;
 }
 
+.document-list {
+  display: grid;
+  gap: 8px;
+}
+
+.document-chip {
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto 28px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  padding: 7px 8px;
+  color: var(--ink);
+}
+
+.document-chip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.document-chip small {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.document-chip button {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.document-chip button:hover {
+  color: var(--coral);
+  background: var(--coral-soft);
+}
+
 .segmented {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -898,6 +947,14 @@ mark.is-mastered {
 
   .mastery-summary {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .document-chip {
+    grid-template-columns: 18px minmax(0, 1fr) 28px;
+  }
+
+  .document-chip small {
+    display: none;
   }
 
   .question-card {

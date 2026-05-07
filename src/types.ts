@@ -1,6 +1,6 @@
 export type ViewId = 'materials' | 'drill' | 'wrong' | 'mastery'
 
-export type MaterialKind = 'text' | 'markdown' | 'pdf' | 'subtitle' | 'note'
+export type MaterialKind = 'text' | 'markdown' | 'pdf' | 'docx' | 'subtitle' | 'note'
 
 export type GenerationDepth = 'quick' | 'standard' | 'deep'
 
@@ -10,9 +10,18 @@ export type QuestionType = 'single' | 'judge' | 'blank'
 
 export interface SourceChunk {
   id: string
+  documentId?: string
+  documentTitle?: string
   topic: string
   text: string
   location: string
+}
+
+export interface MaterialDocument {
+  id: string
+  title: string
+  kind: MaterialKind
+  rawText: string
 }
 
 export interface KnowledgePoint {
@@ -62,6 +71,7 @@ export interface Material {
   id: string
   title: string
   kind: MaterialKind
+  documents?: MaterialDocument[]
   createdAt: string
   updatedAt: string
   status: 'ready' | 'failed'

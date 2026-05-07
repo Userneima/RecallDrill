@@ -4,7 +4,7 @@ RecallDrill is a lightweight study drilling tool. It turns learning materials in
 
 ## MVP Scope
 
-- Upload or paste TXT, Markdown, PDF, subtitle, or note content
+- Upload multiple TXT, Markdown, PDF, DOCX, subtitle, or note documents into one study set
 - Extract knowledge points by topic, importance, difficulty, and source excerpt
 - Generate single-choice, true/false, and fill-in-the-blank questions
 - Drill one question at a time with immediate answer feedback

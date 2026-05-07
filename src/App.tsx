@@ -21,15 +21,17 @@ import './App.css'
 import { createInitialState } from './data'
 import {
   createAttempt,
-  createMaterialFromText,
+  createMaterialFromDocuments,
   evaluateAnswer,
   inferKind,
   questionPriority,
   updateKnowledgePoint,
 } from './lib/recallEngine'
-import type { AppState, GenerationDepth, Material, Question, ViewId } from './types'
+import type { AppState, GenerationDepth, Material, MaterialDocument, Question, ViewId } from './types'
 
 const STORAGE_KEY = 'recalldrill.state.v1'
+
+type ImportedDocument = Omit<MaterialDocument, 'id'> & { tempId: string }
 
 const navItems: Array<{ id: ViewId; label: string; icon: typeof Library }> = [
   { id: 'materials', label: '资料', icon: Library },
@@ -58,7 +60,7 @@ function App() {
   const [draftTitle, setDraftTitle] = useState('我的学习资料')
   const [draftText, setDraftText] = useState('')
   const [depth, setDepth] = useState<GenerationDepth>('standard')
-  const [fileName, setFileName] = useState('')
+  const [importedDocuments, setImportedDocuments] = useState<ImportedDocument[]>([])
   const [uploadError, setUploadError] = useState('')
   const [isParsingFile, setIsParsingFile] = useState(false)
   const [sessionIds, setSessionIds] = useState<string[]>([])
@@ -105,16 +107,38 @@ function App() {
   )
 
   const createMaterial = () => {
-    const rawText = draftText.trim()
-    if (rawText.length < 80) {
+    const pasteText = draftText.trim()
+    const documents: ImportedDocument[] = [
+      ...importedDocuments,
+      ...(pasteText
+        ? [
+            {
+              tempId: `paste-${Date.now()}`,
+              title: '粘贴文本',
+              kind: 'text' as const,
+              rawText: pasteText,
+            },
+          ]
+        : []),
+    ]
+
+    const totalLength = documents.reduce((sum, document) => sum + document.rawText.trim().length, 0)
+    if (totalLength < 80) {
       setUploadError('资料内容太短，至少需要一小段可提取知识点的文本。')
       return
     }
 
-    const material = createMaterialFromText({
-      title: draftTitle.trim() || fileName || '未命名资料',
-      kind: inferKind(fileName || draftTitle),
-      rawText,
+    const title =
+      draftTitle.trim() ||
+      (documents.length > 1 ? `${documents.length} 个文档学习集` : documents[0]?.title.replace(/\.[^.]+$/, '')) ||
+      '未命名资料'
+    const material = createMaterialFromDocuments({
+      title,
+      documents: documents.map((document) => ({
+        title: document.title,
+        kind: document.kind,
+        rawText: document.rawText,
+      })),
       depth,
     })
 
@@ -125,7 +149,7 @@ function App() {
     }))
     setUploadError('')
     setDraftText('')
-    setFileName('')
+    setImportedDocuments([])
     setDraftTitle('我的学习资料')
     setSessionIds(material.questions.map((question) => question.id))
     setSessionIndex(0)
@@ -134,17 +158,20 @@ function App() {
     setView('drill')
   }
 
-  const handleFile = async (file?: File) => {
-    if (!file) return
+  const handleFiles = async (files?: FileList | File[]) => {
+    const selectedFiles = Array.from(files ?? [])
+    if (selectedFiles.length === 0) return
     setIsParsingFile(true)
     setUploadError('')
-    setFileName(file.name)
-    setDraftTitle(file.name.replace(/\.[^.]+$/, ''))
 
     try {
-      const kind = inferKind(file.name)
-      const text = kind === 'pdf' ? await readPdf(file) : await file.text()
-      setDraftText(text)
+      const parsedDocuments = await Promise.all(selectedFiles.map(readDocumentFile))
+      setImportedDocuments((current) => [...current, ...parsedDocuments])
+      setDraftTitle((current) => {
+        if (current !== '我的学习资料') return current
+        if (parsedDocuments.length === 1) return parsedDocuments[0].title.replace(/\.[^.]+$/, '')
+        return `${parsedDocuments.length} 个文档学习集`
+      })
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : '文件解析失败，请改用复制粘贴文本。')
     } finally {
@@ -286,13 +313,16 @@ function App() {
                 draftTitle={draftTitle}
                 draftText={draftText}
                 depth={depth}
-                fileName={fileName}
+                importedDocuments={importedDocuments}
                 isParsingFile={isParsingFile}
                 uploadError={uploadError}
                 onTitleChange={setDraftTitle}
                 onTextChange={setDraftText}
                 onDepthChange={setDepth}
-                onFile={handleFile}
+                onFiles={handleFiles}
+                onRemoveDocument={(tempId) =>
+                  setImportedDocuments((current) => current.filter((document) => document.tempId !== tempId))
+                }
                 onCreate={createMaterial}
                 onSelect={selectMaterial}
                 onPractice={startPractice}
@@ -341,13 +371,14 @@ function MaterialsView(props: {
   draftTitle: string
   draftText: string
   depth: GenerationDepth
-  fileName: string
+  importedDocuments: ImportedDocument[]
   isParsingFile: boolean
   uploadError: string
   onTitleChange: (value: string) => void
   onTextChange: (value: string) => void
   onDepthChange: (value: GenerationDepth) => void
-  onFile: (file?: File) => void
+  onFiles: (files?: FileList | File[]) => void
+  onRemoveDocument: (tempId: string) => void
   onCreate: () => void
   onSelect: (materialId: string) => void
   onPractice: (mode?: 'all' | 'wrong' | 'weak') => void
@@ -372,19 +403,44 @@ function MaterialsView(props: {
           <label className="file-drop">
             <input
               type="file"
-              accept=".txt,.md,.markdown,.pdf,.srt,.vtt"
-              onChange={(event) => props.onFile(event.target.files?.[0])}
+              multiple
+              accept=".txt,.md,.markdown,.pdf,.docx,.srt,.vtt"
+              onChange={(event) => {
+                props.onFiles(event.target.files ?? undefined)
+                event.currentTarget.value = ''
+              }}
             />
             <FileUp size={20} />
-            <span>{props.isParsingFile ? '正在解析文件...' : props.fileName || '选择 TXT / Markdown / PDF / 字幕文件'}</span>
+            <span>
+              {props.isParsingFile
+                ? '正在解析文件...'
+                : props.importedDocuments.length > 0
+                  ? `已选择 ${props.importedDocuments.length} 个文档`
+                  : '选择 TXT / Markdown / PDF / DOCX / 字幕文件'}
+            </span>
           </label>
+
+          {props.importedDocuments.length > 0 && (
+            <div className="document-list">
+              {props.importedDocuments.map((document) => (
+                <div key={document.tempId} className="document-chip">
+                  <FileUp size={15} />
+                  <span>{document.title}</span>
+                  <small>{formatKind(document.kind)} · {document.rawText.length.toLocaleString()} 字符</small>
+                  <button type="button" onClick={() => props.onRemoveDocument(document.tempId)} aria-label={`移除 ${document.title}`}>
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
 
           <label className="field">
             <span>资料内容</span>
             <textarea
               value={props.draftText}
               onChange={(event) => props.onTextChange(event.target.value)}
-              placeholder="粘贴课堂笔记、Markdown、课程字幕或专业资料。"
+              placeholder="也可以继续粘贴课堂笔记、Markdown、课程字幕或专业资料，会和已选文档合并生成。"
             />
           </label>
 
@@ -433,7 +489,8 @@ function MaterialsView(props: {
                   <span>
                     <strong>{material.title}</strong>
                     <small>
-                      {material.knowledgePoints.length} 个知识点 · {material.questions.length} 题 · {stats.masteryRate}% 掌握
+                      {getDocumentCount(material)} 个文档 · {material.knowledgePoints.length} 个知识点 · {material.questions.length} 题 ·{' '}
+                      {stats.masteryRate}% 掌握
                     </small>
                   </span>
                 </button>
@@ -756,6 +813,20 @@ function getViewTitle(view: ViewId) {
   return '掌握情况'
 }
 
+function getDocumentCount(material?: Material) {
+  if (!material) return 0
+  return material.documents?.length ?? 1
+}
+
+function formatKind(kind: MaterialDocument['kind']) {
+  if (kind === 'markdown') return 'Markdown'
+  if (kind === 'pdf') return 'PDF'
+  if (kind === 'docx') return 'DOCX'
+  if (kind === 'subtitle') return '字幕'
+  if (kind === 'note') return '笔记'
+  return '文本'
+}
+
 function getMaterialStats(material?: Material) {
   if (!material) {
     return { pointCount: 0, questionCount: 0, answeredCount: 0, wrongCount: 0, weakCount: 0, masteryRate: 0 }
@@ -838,6 +909,33 @@ async function readPdf(file: File) {
   }
 
   return pages.join('\n\n')
+}
+
+async function readDocumentFile(file: File): Promise<ImportedDocument> {
+  const kind = inferKind(file.name)
+  const rawText = kind === 'pdf' ? await readPdf(file) : kind === 'docx' ? await readDocx(file) : await file.text()
+
+  if (rawText.trim().length < 16) {
+    throw new Error(`${file.name} 没有解析出足够文本。`)
+  }
+
+  return {
+    tempId: `${file.name}-${file.size}-${file.lastModified}`,
+    title: file.name,
+    kind,
+    rawText,
+  }
+}
+
+async function readDocx(file: File) {
+  const mammoth = await import('mammoth')
+  const data = await file.arrayBuffer()
+  const result = await mammoth.extractRawText({ arrayBuffer: data })
+  return result.value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join('\n\n')
 }
 
 export default App

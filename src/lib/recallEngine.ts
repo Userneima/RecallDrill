@@ -4,6 +4,7 @@ import type {
   KnowledgePoint,
   MasteryLevel,
   Material,
+  MaterialDocument,
   MaterialKind,
   Question,
   SourceChunk,
@@ -48,6 +49,7 @@ const genericDistractors = [
 export function inferKind(fileName: string): MaterialKind {
   const lower = fileName.toLowerCase()
   if (lower.endsWith('.pdf')) return 'pdf'
+  if (lower.endsWith('.docx')) return 'docx'
   if (lower.endsWith('.md') || lower.endsWith('.markdown')) return 'markdown'
   if (lower.endsWith('.srt') || lower.endsWith('.vtt')) return 'subtitle'
   return 'text'
@@ -66,8 +68,35 @@ export function createMaterialFromText(input: {
   rawText: string
   depth: GenerationDepth
 }): Material {
+  return createMaterialFromDocuments({
+    title: input.title,
+    documents: [
+      {
+        id: uid('doc'),
+        title: input.title || '粘贴文本',
+        kind: input.kind,
+        rawText: input.rawText,
+      },
+    ],
+    depth: input.depth,
+  })
+}
+
+export function createMaterialFromDocuments(input: {
+  title: string
+  documents: Array<Omit<MaterialDocument, 'id'> & { id?: string }>
+  depth: GenerationDepth
+}): Material {
   const materialId = uid('mat')
-  const chunks = chunkMaterial(input.rawText)
+  const documents = input.documents
+    .map((document) => ({
+      ...document,
+      id: document.id ?? uid('doc'),
+      rawText: document.rawText.trim(),
+    }))
+    .filter((document) => document.rawText.length > 0)
+  const rawText = documents.map((document) => `# ${document.title}\n${document.rawText}`).join('\n\n')
+  const chunks = chunkDocuments(documents)
   const knowledgePoints = extractKnowledgePoints(chunks, materialId)
   const questions = generateQuestions(knowledgePoints, input.depth)
   const time = now()
@@ -75,18 +104,24 @@ export function createMaterialFromText(input: {
   return {
     id: materialId,
     title: input.title || '未命名资料',
-    kind: input.kind,
+    kind: documents.length === 1 ? documents[0].kind : 'note',
+    documents,
     createdAt: time,
     updatedAt: time,
     status: 'ready',
-    rawText: input.rawText,
+    rawText,
     chunks,
     knowledgePoints,
     questions,
   }
 }
 
-function chunkMaterial(rawText: string): SourceChunk[] {
+function chunkDocuments(documents: MaterialDocument[]): SourceChunk[] {
+  return documents.flatMap((document) => chunkMaterial(document))
+}
+
+function chunkMaterial(document: MaterialDocument): SourceChunk[] {
+  const rawText = document.rawText
   const normalized = rawText
     .replace(/\r/g, '')
     .replace(/\n{3,}/g, '\n\n')
@@ -108,9 +143,11 @@ function chunkMaterial(rawText: string): SourceChunk[] {
 
     chunks.push({
       id: uid('chunk'),
+      documentId: document.id,
+      documentTitle: document.title,
       topic: currentTopic,
       text,
-      location: `第 ${paragraphIndex} 段`,
+      location: `${document.title} · 第 ${paragraphIndex} 段`,
     })
     paragraphIndex += 1
     buffer = []
@@ -144,9 +181,11 @@ function chunkMaterial(rawText: string): SourceChunk[] {
     .filter((text) => text.length >= 16)
     .map((text, index) => ({
       id: uid('chunk'),
+      documentId: document.id,
+      documentTitle: document.title,
       topic: '未分组',
       text,
-      location: `第 ${index + 1} 段`,
+      location: `${document.title} · 第 ${index + 1} 段`,
     }))
 }
 
